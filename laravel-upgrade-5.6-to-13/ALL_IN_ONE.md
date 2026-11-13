@@ -228,6 +228,12 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
 - **1回の依頼で1つのチェックリスト（1バージョン分）**だけを渡す。全部を一度に渡すと、後半の項目の確認が雑になりやすい
 - **「調査」と「修正」を別の依頼に分ける**。まず「各項目について、該当箇所・判定（OK/NG/該当なし）・根拠（ファイル名と行番号）」を表で出させ、人が見てから修正を頼む
 - `audit_grep.sh` の結果のうち、そのバージョンのIDの部分を一緒に渡すと、AIが自分で検索するより漏れが少ない
+- **AIが出した修正案は、そのまま適用する前に意味が変わらないかを確認する**。実際によくある例:
+  - 引数なしの `get_class()` → `static::class`（正しくは `self::class`。P83-01）
+  - CSV関数に `escape: ''` を追加（警告は消えるが出力が変わりうる。挙動を変えないなら `escape: '\\'`。P84-03）
+  - `diffInDays(absolute: true)` だけで整数になると思っている（浮動小数点数のまま。L110-03）
+  - 「`schema` は `search_path` に改名されたので今は効いていない」（13でもフォールバックで読まれる。L90-05）
+- `audit_grep.sh` の結果には誤検知が含まれる。PHPの構文に関するチェックの一部（P82-01、P85-08）はBladeを対象外にしているので、**Blade内のPHPはコンパイル済みビューへの `php -l` の結果で判断する**
 - 依頼の例:
 
     ```
@@ -579,6 +585,8 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
 - [ ] **L80-04 / L80-05** 🟡🔍 **ページネーションのデフォルトがTailwind CSSに**（Pagination Defaults）
   - OK: Bootstrapを使っている画面があるなら、`AppServiceProvider` の `boot` に `Paginator::useBootstrap()`（Bootstrap 5なら `useBootstrapFive()`、4なら `useBootstrapFour()`）がある
   - **ない場合、エラーにならずにページ送りのリンクの見た目が崩れる**（Tailwindのクラスが当たらない）
+  - **5.6のデフォルトはBootstrap 4**（`pagination::bootstrap-4`）で、13の `Paginator::useBootstrap()` もBootstrap 4。5.6のときの見た目に戻すなら `useBootstrap()`（= `useBootstrapFour()`）。CSSをBootstrap 5に上げているなら `useBootstrapFive()`。**実際に読み込んでいるCSSのバージョンに合わせる**
+  - 独自のページネーションのビュー（`resources/views/vendor/pagination`）を使っている箇所は、この設定の影響を受けない
   - 13.xで、Bootstrap 3のビュー名が `pagination::bootstrap-3` などになった（L130-07）
 - [ ] **L80-06** 🟡🔍 **キューの `retryAfter` → `backoff`、`timeoutAt` → `retryUntil`**
   - OK: ジョブ・メール・通知・リスナーに `retryAfter` / `timeoutAt` のメソッドやプロパティが残っていない
@@ -659,6 +667,7 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
 ### その他
 
 - [ ] **L90-05** ⚙️🔍 **Postgresの `schema` → `search_path`**（`config/database.php`）
+  - Laravel 13でも、`search_path` がなければ `schema` が読まれる（`$config['search_path'] ?? $config['schema']`）ので、**`schema` のままでも現在は動く**。急ぎではないが、将来の削除に備えて改名しておく
 - [ ] **L90-06** 🟡🔍 **独自のキャストの `set` に `null` が渡る**（Custom Casts & `null`）
   - OK: `CastsAttributes` を実装したクラスの `set` が、`$value` が `null` の場合を処理している
 - [ ] **L90-07** 🟡🔍 **`when` / `unless` にクロージャを渡すと、その戻り値で判定**
@@ -778,13 +787,15 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
 - [ ] **L110-03** 🟡🔍 **Carbon 3の `diffIn*` が浮動小数点数・負の値を返す**（Carbon 3）
   - OK: `diffInDays` などの結果を**整数かつ正の値として使っている箇所**（「あと○日」の表示、期限切れの判定、日割りの料金計算、年齢の計算）が、`(int)`・`abs()`・比較の向きの見直しで対応されている
   - 例: `$now->diffInDays($deadline)` は、期限が過去なら**負の値**、端数があれば `2.5` のような値になる。`if ($days == 0)` や `if ($days > 7)` の判定が変わる
+  - **`diffInDays($d, absolute: true)` は符号をなくすだけで、浮動小数点数のまま**。整数が必要なら `(int)` も付ける。**切り捨てでよいか（Carbon 2は切り捨てだった）**も確認する
   - **12.x以降はCarbon 3が必須**なので、全件確認が必要
   - Carbonの移行ガイド: https://carbon.nesbot.com/guide/getting-started/migration.html （ほかにも、`createFromTimestamp` のタイムゾーンの扱いなどが変わっている）
 - [ ] **L110-04** 🟡🔍 **レート制限が秒単位に**（Per-Second Rate Limiting）
   - OK: `new Limit(...)` `new GlobalLimit(...)` `new ThrottlesExceptions(...)` に渡す時間が、**分ではなく秒の値**になっている。`decayMinutes` → `decaySeconds`
   - `Limit::perMinute()` などの静的メソッドを使っていれば影響なし
 - [ ] **L110-13** ⚙️🔍 **キャッシュのキーの接頭辞の後に `:` が付かない**（Cache Key Prefixes）
-  - OK: DynamoDB・Memcached・Redisのキャッシュの接頭辞が変わってもよい（**既存のキャッシュは読めなくなる**）。外部のシステムやスクリプトがキャッシュのキーを直接参照している場合は、接頭辞の末尾に `:` を自分で付ける
+  - 対象は **DynamoDB・Memcached・Redisのキャッシュストアだけ**（`file` や `database` のストアは関係ない）。`config/cache.php` の `default` と、実際に使っているストアを確認する
+  - OK: キャッシュの接頭辞が変わってもよい。影響は**リリース直後に既存のキャッシュが一度すべて外れる**ことで、普通は作り直されるだけで済む（リリース直後の負荷に注意）。外部のシステムやスクリプトがキャッシュのキーを直接参照している場合、またはキャッシュを「消えては困るデータ」の保存に使っている場合は、接頭辞の末尾に `:` を自分で付ける
 
 ### 認証
 
@@ -1034,6 +1045,7 @@ PHP公式の移行ノート（php-src の `UPGRADING`）の「Backward Incompati
   - OK: プロパティを宣言している。`#[\AllowDynamicProperties]` は必要な箇所だけ（P82-03）
   - **自前のクラスや古いパッケージで大量に出やすい**。実行しないと出ないので、ログで集める
 - [ ] **P82-01** 🔴🔍 **`"${var}"` / `"${expr}"` の形の埋め込みが非推奨**（`"{$var}"` にする）
+  - `audit_grep.sh` はBladeのテンプレートを検索しない（JavaScriptのテンプレートリテラル `` `${x}` `` を大量に誤検知するため）。**Blade内のPHPは、コンパイル済みビューへの `php -l`（`00_how_to_audit.md` の手順1）で確認する**。こちらはPHPの部分だけを正確に拾う
 - [ ] **P82-02** 🔴🔍 **`utf8_encode()` / `utf8_decode()` が非推奨**（`mb_convert_encoding()` を使う）。**Shift_JISのCSVの処理などで、本来は不適切な使い方をしていることが多い**ので、置き換えの際に文字コードの前提を確認する
 - [ ] **P82-04** 🟡🔍 **`strtolower()` / `strtoupper()` などがロケールに依存しない**（常にASCII）
 - [ ] **P82-05** 🟡🔍 **`str_split('')` が空の配列を返す**（以前は `['']`）
@@ -1044,7 +1056,9 @@ PHP公式の移行ノート（php-src の `UPGRADING`）の「Backward Incompati
 
 ## PHP 8.3
 
-- [ ] **P83-01** 🔴🔍 **引数なしの `get_class()` / `get_parent_class()` が非推奨**（`self::class` / `static::class`）
+- [ ] **P83-01** 🔴🔍 **引数なしの `get_class()` / `get_parent_class()` が非推奨**
+  - 置き換え先は **`self::class` / `get_parent_class(self::class)`（または `parent::class`）**。引数なしの `get_class()` は**メソッドを定義したクラスの名前**を返すので、`self::class` と同じ意味になる
+  - **`static::class` にすると、継承先から呼んだときに継承先のクラス名に変わる**（挙動が変わる）。継承先の名前が欲しいという意図が確認できる場合だけ `static::class` にする
 - [ ] **P83-02** 🔴🔍 **`assert_options()` と `ASSERT_*` 定数が非推奨**
 - [ ] **P83-03** 🟡🔍 **`range()` の挙動の変更**（オブジェクト・配列で `TypeError`、数値形式の文字列の扱いなど）
 - [ ] **P83-04** 🟡 **空の文字列・数値でない文字列への `++` / `--` が非推奨**（8.5でさらに進んだ）
@@ -1062,7 +1076,9 @@ PHP公式の移行ノート（php-src の `UPGRADING`）の「Backward Incompati
   - **古いコードで大量に出る**。Rectorで一括で書き換えられる（`php -l` でも出る）
 - [ ] **P84-02** 🔴🔍 **`trigger_error()` の `E_USER_ERROR` が非推奨、`E_STRICT` 定数が非推奨**
 - [ ] **P84-03** 🔴🔍 **`fputcsv()` / `fgetcsv()` / `str_getcsv()` / `SplFileObject` のCSVのメソッドで `$escape` 引数の省略が非推奨**
-  - OK: CSVの入出力で `$escape` を明示している（RFC 4180どおりにするなら `''`）。**CSVの出力の内容が変わらないこと**を、旧版の出力と比べて確認する
+  - OK: CSVの入出力で `$escape` を明示している
+  - **挙動を変えずに警告だけ消すなら `escape: '\\'`（従来のデフォルト値）を渡す**。`escape: ''` にするとRFC 4180どおりの扱いになり、**バックスラッシュの直後に `"` がある値の出力・読み込みの結果が変わる**。`''` に変えるのは、その変更を意図した場合だけにする
+  - どちらにしても、**CSVの出力の内容が変わらないこと**を旧版の出力と比べて確認する
 - [ ] **P84-05** 🔴🔍 **`mysqli_ping()` / `mysqli_kill()` / `mysqli_refresh()`、`lcg_value()`、`xml_set_object()`、引数2つの `stream_context_set_option()` が非推奨**
 - [ ] **P84-06** ⚙️🔍 **セッションの設定**: `session.sid_length` `session.sid_bits_per_character` の変更、`session.use_trans_sid` などが非推奨。`session_set_save_handler()` の3つ以上の引数も非推奨
 - [ ] **P84-07** ⚙️ **OPcacheのJITのデフォルト**（`opcache.jit=disable`、`opcache.jit_buffer_size=64M`）: `jit_buffer_size` だけでJITを有効にしていたなら、`opcache.jit` も明示しないと無効のまま
@@ -1078,13 +1094,14 @@ PHP公式の移行ノート（php-src の `UPGRADING`）の「Backward Incompati
 - [ ] **X-01** 🔴🔍 **`array_first()` / `array_last()` が本体の関数に**: `laravel/helpers` や自前の同名のヘルパーと衝突する（`12_pitfalls_outside_official_guides.md`）
   - PHP 8.5ではほかにも組み込みの関数が増えている。**自前のグローバル関数と名前が衝突しないか**、原文の「New Functions」の節で確認する（X-04）
 - [ ] **P85-01** 🔴🔍 **非正規のキャスト名 `(boolean)` `(integer)` `(double)` `(binary)` が非推奨**
-- [ ] **P85-02** 🔴🔍 **`curl_close()` `curl_share_close()` `finfo_close()` `imagedestroy()` `xml_parser_free()` が非推奨**（呼び出しを削除するだけ）
+- [ ] **P85-02** 🔴🔍 **`curl_close()` `curl_share_close()` `finfo_close()` `imagedestroy()` `xml_parser_free()` が非推奨**（呼び出しを削除するだけ。PHP 8.0以降はオブジェクトなので、変数がスコープを抜ければ解放される。**長時間動くワーカーで、ハンドルをプロパティに持ち続けている場合**は `unset()` か `null` の代入にする）
 - [ ] **P85-03** 🔴🔍 **`$http_response_header` が非推奨**: `file_get_contents()` でHTTPを呼んだ後のレスポンスヘッダーは `http_get_last_response_headers()` で取る
 - [ ] **P85-04** 🔴🔍 **`PDO` クラスのドライバ固有の定数・メソッドが非推奨**: `PDO::MYSQL_ATTR_SSL_CA` → `Pdo\Mysql::ATTR_SSL_CA` など。**古い雛形の `config/database.php` の `options` に `PDO::MYSQL_ATTR_SSL_CA` がある**
 - [ ] **P85-05** 🔴🔍 **Reflectionの `setAccessible()` が非推奨**（効果がないので削除する）
 - [ ] **P85-06** 🟡🔍 **`__sleep()` / `__wakeup()` がソフト非推奨**（`__serialize()` / `__unserialize()` を使う）
 - [ ] **P85-07** 🔴🔍 **`SplObjectStorage::attach()` / `detach()` / `contains()`、`socket_set_timeout()`、`DATE_RFC7231` が非推奨**
 - [ ] **P85-08** 🔴🔍 **バッククォート演算子（`` `ls` ``）が非推奨**: `shell_exec()` か Laravel の `Process` を使う
+  - P82-01 と同じく、Blade内はコンパイル済みビューへの `php -l` で確認する
 - [ ] **P85-09** 🔴🔍 **`case` の後のセミコロン（`case 1;`）が非推奨**
 - [ ] **P85-10** 🟡🔍 **`null` を配列のオフセットや `array_key_exists()` のキーに使うのが非推奨**（実行時に出る）
 - [ ] **P85-11** ⚙️🔍 **php.iniの変更**: `disable_classes` が削除された。**OPcacheが常に本体に組み込まれる**ので、`zend_extension=opcache` の行を見直す（有効・無効は `opcache.enable` / `opcache.enable_cli`）

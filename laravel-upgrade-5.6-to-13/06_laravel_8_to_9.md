@@ -39,6 +39,7 @@
 ### その他
 
 - [ ] **L90-05** ⚙️🔍 **Postgresの `schema` → `search_path`**（`config/database.php`）
+  - Laravel 13でも、`search_path` がなければ `schema` が読まれる（`$config['search_path'] ?? $config['schema']`）ので、**`schema` のままでも現在は動く**。急ぎではないが、将来の削除に備えて改名しておく
 - [ ] **L90-06** 🟡🔍 **独自のキャストの `set` に `null` が渡る**（Custom Casts & `null`）
   - OK: `CastsAttributes` を実装したクラスの `set` が、`$value` が `null` の場合を処理している
 - [ ] **L90-07** 🟡🔍 **`when` / `unless` にクロージャを渡すと、その戻り値で判定**

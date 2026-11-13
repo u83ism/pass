@@ -16,6 +16,8 @@
 - [ ] **L80-04 / L80-05** 🟡🔍 **ページネーションのデフォルトがTailwind CSSに**（Pagination Defaults）
   - OK: Bootstrapを使っている画面があるなら、`AppServiceProvider` の `boot` に `Paginator::useBootstrap()`（Bootstrap 5なら `useBootstrapFive()`、4なら `useBootstrapFour()`）がある
   - **ない場合、エラーにならずにページ送りのリンクの見た目が崩れる**（Tailwindのクラスが当たらない）
+  - **5.6のデフォルトはBootstrap 4**（`pagination::bootstrap-4`）で、13の `Paginator::useBootstrap()` もBootstrap 4。5.6のときの見た目に戻すなら `useBootstrap()`（= `useBootstrapFour()`）。CSSをBootstrap 5に上げているなら `useBootstrapFive()`。**実際に読み込んでいるCSSのバージョンに合わせる**
+  - 独自のページネーションのビュー（`resources/views/vendor/pagination`）を使っている箇所は、この設定の影響を受けない
   - 13.xで、Bootstrap 3のビュー名が `pagination::bootstrap-3` などになった（L130-07）
 - [ ] **L80-06** 🟡🔍 **キューの `retryAfter` → `backoff`、`timeoutAt` → `retryUntil`**
   - OK: ジョブ・メール・通知・リスナーに `retryAfter` / `timeoutAt` のメソッドやプロパティが残っていない

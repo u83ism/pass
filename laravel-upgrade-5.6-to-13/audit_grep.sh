@@ -80,6 +80,27 @@ chk_ex() {
   grep -rnIE "${EXCLUDES[@]}" --include='*.php' -e "$re" "${existing[@]}" 2>/dev/null | grep -vE -e "$ex" | print_hits "$id" "$kind" "$title"
 }
 
+# chk_php ID 種別 タイトル 正規表現 [対象ディレクトリ...]
+# Bladeのテンプレート（*.blade.php）を除いて検索する。BladeにはJavaScriptが混ざり、
+# テンプレートリテラル（`...${x}...`）や jQuery の .each() を誤検知するため。
+# Bladeの中のPHPは、00_how_to_audit.md の「コンパイル済みビューへの php -l」で確認する
+chk_php() {
+  local id="$1" kind="$2" title="$3" re="$4"
+  shift 4
+  local dirs=("$@")
+  [ "${#dirs[@]}" -eq 0 ] && dirs=("${CODE_DIRS[@]}")
+  local existing=()
+  for d in "${dirs[@]}"; do [ -e "$d" ] && existing+=("$d"); done
+  if [ "${#existing[@]}" -eq 0 ]; then
+    echo "- [$id] $kind $title … 対象なし"
+    return
+  fi
+  grep -rnIE "${EXCLUDES[@]}" --include='*.php' --exclude='*.blade.php' -e "$re" "${existing[@]}" 2>/dev/null | print_hits "$id" "$kind" "$title"
+}
+
+# コメント行（//、#、/* */、PHPDoc の * の行）を除くための除外パターン
+COMMENT_LINE=':[0-9]+:[[:space:]]*(\*|//|#|/\*)'
+
 # composer.json に指定のパッケージがあるか
 chk_pkg() {
   local id="$1" kind="$2" title="$3" re="$4"
@@ -105,7 +126,7 @@ echo
 echo "## 横断（最優先）"
 chk  X-01 "🔴" "array_first()/array_last() の呼び出し（PHP 8.5本体の関数と衝突）" '\barray_(first|last)[[:space:]]*\('
 chk_pkg X-02 "🔴" "laravel/helpers への依存が残っている" '"laravel/helpers"'
-chk  X-03 "🔴" "削除された str_*/array_* グローバルヘルパーの呼び出し" '(^|[^>:$a-zA-Z0-9_])(str_(slug|random|limit|plural|singular|snake|studly|camel|kebab|title|after|before|start|finish|is|contains|replace_(first|last|array))|array_(get|set|has|only|except|pluck|where|wrap|add|collapse|divide|dot|flatten|forget|prepend|pull|random|sort_recursive)|starts_with|ends_with|camel_case|snake_case|studly_case|kebab_case|title_case)[[:space:]]*\('
+chk  X-03 "🔴" "削除された str_*/array_* グローバルヘルパーの呼び出し（str_contains/str_starts_with/str_ends_with はPHP 8.0の組み込み関数なので対象外）" '(^|[^>:$a-zA-Z0-9_])(str_(slug|random|limit|plural|singular|snake|studly|camel|kebab|title|after|before|start|finish|is|replace_(first|last|array))|array_(get|set|has|only|except|pluck|where|wrap|add|collapse|divide|dot|flatten|forget|prepend|pull|random|sort_recursive)|starts_with|ends_with|camel_case|snake_case|studly_case|kebab_case|title_case)[[:space:]]*\('
 chk  X-04 "🟡" "function_exists で囲った自前のグローバル関数（本体や新しいヘルパーと衝突すると黙って相手が使われる）" "function_exists[[:space:]]*\\([[:space:]]*['\"]"
 
 # ---------------------------------------------------------------------------
@@ -150,7 +171,7 @@ chk  L60-04 "🟡" "ポリシーで deny() を return していない" '^[[:spac
 chk  L60-05 "🟡" "スケジューラの between/unlessBetween（日付をまたぐ範囲の挙動が修正された）" '->(between|unlessBetween)[[:space:]]*\(' app routes
 chk  L60-06 "🟡" "リレーション経由の update（BelongsTo::update はイベントもマスアサイン保護もない）" '->[a-zA-Z_]+\(\)->update[[:space:]]*\(' app
 chk  L60-07 "🟡" "主キーを自動増分しないモデル（文字列キーなら \$keyType = 'string' が必要）" '\$incrementing[[:space:]]*=[[:space:]]*false' app
-chk_any L60-08 "⚙️" "queue:work の起動設定（--tries のデフォルトは1回）" 'queue:work|queue:listen|horizon'
+chk_any L60-08 "⚙️" "queue:work の起動設定（--tries のデフォルトは1回）" 'artisan[[:space:]]+(queue:work|queue:listen|horizon)([[:space:]]|$|["'"'"'])'
 chk  L60-09 "🟡" "route()/action() に連想配列を渡す（パスにないキーはクエリ文字列になる）" '(route|action|URL::route|URL::action|to_route)[[:space:]]*\([^)]*,[[:space:]]*\[[^]]*=>'
 chk  L60-10 "🔴" "email/resend への GET リンク（POST に変わった）" "email/resend|verification\\.resend" resources routes
 
@@ -237,7 +258,11 @@ chk  L110-08 "🟡" "独自の getAuthPassword（パスワード列名が passwo
 chk  L110-09 "🟡" "SendEmailVerificationNotification の登録（自動登録と二重になると確認メールが2通）" 'SendEmailVerificationNotification' app
 chk_pkg L110-10 "🔴" "spatie/once（Laravel の once() と衝突）" '"spatie/once"'
 chk_pkg L110-11 "⚙️" "マイグレーションの publish が必要なパッケージ（sanctum/passport/telescope/cashier/spark）" '"laravel/(sanctum|passport|telescope|cashier|spark-stripe)"'
-chk  L110-12 "⚙️" "Passport のパスワードグラント（デフォルトで無効）" "grant_type|password_client|enablePasswordGrant|PasswordGrant"
+if [ -f composer.json ] && grep -q '"laravel/passport"' composer.json; then
+  chk  L110-12 "⚙️" "Passport のパスワードグラント（デフォルトで無効。使っているなら enablePasswordGrant が必要）" "enablePasswordGrant|PasswordGrant|password_client|passport\\.password"
+else
+  echo "- [L110-12] ⚙️ Passport のパスワードグラント … laravel/passport を使っていないので対象外"
+fi
 chk  L110-13 "⚙️" "キャッシュのキーの接頭辞（末尾の ':' が付かなくなった）" "'prefix'[[:space:]]*=>" config/cache.php config/database.php
 
 # ---------------------------------------------------------------------------
@@ -271,7 +296,7 @@ chk  L130-14 "🔴" "モデルの static boot / boot* メソッド（中で同�
 # ---------------------------------------------------------------------------
 echo
 echo "## PHP 8.0（11_php_7.4_to_8.5_checklist.md）"
-chk  P80-01 "🔴" "削除された関数（create_function / each / money_format など）" '(^|[^a-zA-Z_>:$])(create_function|each|money_format|hebrevc|convert_cyr_string|restore_include_path|get_magic_quotes_gpc|get_magic_quotes_runtime|fgetss|gzgetss|ezmlm_hash|image2wbmp|png2wbmp|jpeg2wbmp|read_exif_data|gmp_random|ldap_sort)[[:space:]]*\('
+chk  P80-01 "🔴" "削除された関数（create_function / each / money_format など）" '(^|[^a-zA-Z_>:$.])(create_function|each|money_format|hebrevc|convert_cyr_string|restore_include_path|get_magic_quotes_gpc|get_magic_quotes_runtime|fgetss|gzgetss|ezmlm_hash|image2wbmp|png2wbmp|jpeg2wbmp|read_exif_data|gmp_random|ldap_sort)[[:space:]]*\('
 chk  P80-02 "🔴" "__autoload / \$php_errormsg / (real) / (unset) キャスト" '__autoload|\$php_errormsg|\((real|unset)\)'
 chk  P80-03 "🔴" "大文字小文字を区別しない定数（define の第3引数 true）" 'define[[:space:]]*\([^)]*,[^)]*,[[:space:]]*true[[:space:]]*\)'
 chk  P80-04 "🔴" "波括弧での文字列・配列のオフセットアクセス（\$str{0}）" '\$[a-zA-Z_][a-zA-Z0-9_]*\{[0-9$][^}]*\}'
@@ -296,7 +321,7 @@ chk  P81-06 "🔴" "オブジェクトに対する key()/current()/next()/reset(
 
 echo
 echo "## PHP 8.2"
-chk  P82-01 "🔴" "\"\${var}\" 形式の文字列の埋め込み（非推奨）" '"[^"]*\$\{[a-zA-Z_]'
+chk_php P82-01 "🔴" "\"\${var}\" 形式の文字列の埋め込み（非推奨。Blade内はコンパイル済みビューの php -l で確認）" '"[^"]*\$\{[a-zA-Z_]'
 chk  P82-02 "🔴" "utf8_encode / utf8_decode（非推奨）" 'utf8_(encode|decode)[[:space:]]*\('
 chk  P82-03 "🟡" "#[\\AllowDynamicProperties]（動的プロパティを許可している箇所）" 'AllowDynamicProperties'
 chk  P82-04 "🟡" "setlocale と strtolower/strtoupper の組み合わせ（ロケールに依存しなくなった）" 'setlocale[[:space:]]*\('
@@ -310,7 +335,7 @@ chk  P83-03 "🟡" "range()（引数の扱いが多数変更）" '(^|[^a-zA-Z_>:
 
 echo
 echo "## PHP 8.4"
-chk  P84-01 "🔴" "暗黙の null 許容型（Type \$x = null。?Type が必要）" '(\(|,)[[:space:]]*[A-Za-z_\\][A-Za-z0-9_\\]*[[:space:]]+&?(\.\.\.)?\$[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*null[[:space:]]*[,)]'
+chk_ex P84-01 "🔴" "暗黙の null 許容型（Type \$x = null。?Type が必要。コメント・PHPDocの行は除外）" '(\(|,)[[:space:]]*[A-Za-z_\\][A-Za-z0-9_\\]*[[:space:]]+&?(\.\.\.)?\$[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*null[[:space:]]*[,)]' "$COMMENT_LINE"
 chk  P84-02 "🔴" "trigger_error の E_USER_ERROR / E_STRICT" 'E_USER_ERROR|E_STRICT'
 chk  P84-03 "🔴" "CSV 関数（\$escape 引数を明示する必要）" '(fputcsv|fgetcsv|str_getcsv|setCsvControl)[[:space:]]*\('
 chk  P84-04 "🔴" "本体から外れた拡張（IMAP / OCI8 / PSpell）" '(^|[^a-zA-Z_])(imap_[a-z_]+|oci_[a-z_]+|pspell_[a-z_]+)[[:space:]]*\(|pdo_oci|oci:dbname'
@@ -326,7 +351,7 @@ chk  P85-04 "🔴" "PDO クラスのドライバ固有定数（PDO::MYSQL_ATTR_*
 chk  P85-05 "🔴" "Reflection の setAccessible（非推奨）" '->setAccessible[[:space:]]*\('
 chk  P85-06 "🟡" "__sleep / __wakeup（ソフト非推奨）" 'function[[:space:]]+__(sleep|wakeup)[[:space:]]*\('
 chk  P85-07 "🔴" "SplObjectStorage の attach/detach/contains、socket_set_timeout、DATE_RFC7231" 'SplObjectStorage|socket_set_timeout|RFC7231'
-chk  P85-08 "🔴" "バッククォート演算子（shell_exec の別名。文字列中のバッククォートも拾うので目で確認）" '(=|\(|return|echo)[[:space:]]*`'
+chk_php P85-08 "🔴" "バッククォート演算子（shell_exec の別名。Blade内はコンパイル済みビューの php -l で確認）" '(=|\(|return|echo)[[:space:]]*`'
 chk  P85-09 "🔴" "case の後にセミコロン" '^[[:space:]]*(case[[:space:]][^:;?]*|default[[:space:]]*);[[:space:]]*$'
 chk  P85-10 "🟡" "null を配列のオフセットや array_key_exists に使う" '\[[[:space:]]*null[[:space:]]*\]|array_key_exists[[:space:]]*\([[:space:]]*null'
 chk_any P85-11 "⚙️" "disable_classes / zend_extension=opcache などの ini 設定" 'disable_classes|zend_extension[[:space:]]*=[[:space:]]*"?opcache|opcache\.jit'

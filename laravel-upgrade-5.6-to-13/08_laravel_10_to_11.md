@@ -29,13 +29,15 @@
 - [ ] **L110-03** 🟡🔍 **Carbon 3の `diffIn*` が浮動小数点数・負の値を返す**（Carbon 3）
   - OK: `diffInDays` などの結果を**整数かつ正の値として使っている箇所**（「あと○日」の表示、期限切れの判定、日割りの料金計算、年齢の計算）が、`(int)`・`abs()`・比較の向きの見直しで対応されている
   - 例: `$now->diffInDays($deadline)` は、期限が過去なら**負の値**、端数があれば `2.5` のような値になる。`if ($days == 0)` や `if ($days > 7)` の判定が変わる
+  - **`diffInDays($d, absolute: true)` は符号をなくすだけで、浮動小数点数のまま**。整数が必要なら `(int)` も付ける。**切り捨てでよいか（Carbon 2は切り捨てだった）**も確認する
   - **12.x以降はCarbon 3が必須**なので、全件確認が必要
   - Carbonの移行ガイド: https://carbon.nesbot.com/guide/getting-started/migration.html （ほかにも、`createFromTimestamp` のタイムゾーンの扱いなどが変わっている）
 - [ ] **L110-04** 🟡🔍 **レート制限が秒単位に**（Per-Second Rate Limiting）
   - OK: `new Limit(...)` `new GlobalLimit(...)` `new ThrottlesExceptions(...)` に渡す時間が、**分ではなく秒の値**になっている。`decayMinutes` → `decaySeconds`
   - `Limit::perMinute()` などの静的メソッドを使っていれば影響なし
 - [ ] **L110-13** ⚙️🔍 **キャッシュのキーの接頭辞の後に `:` が付かない**（Cache Key Prefixes）
-  - OK: DynamoDB・Memcached・Redisのキャッシュの接頭辞が変わってもよい（**既存のキャッシュは読めなくなる**）。外部のシステムやスクリプトがキャッシュのキーを直接参照している場合は、接頭辞の末尾に `:` を自分で付ける
+  - 対象は **DynamoDB・Memcached・Redisのキャッシュストアだけ**（`file` や `database` のストアは関係ない）。`config/cache.php` の `default` と、実際に使っているストアを確認する
+  - OK: キャッシュの接頭辞が変わってもよい。影響は**リリース直後に既存のキャッシュが一度すべて外れる**ことで、普通は作り直されるだけで済む（リリース直後の負荷に注意）。外部のシステムやスクリプトがキャッシュのキーを直接参照している場合、またはキャッシュを「消えては困るデータ」の保存に使っている場合は、接頭辞の末尾に `:` を自分で付ける
 
 ### 認証
 
