@@ -17,13 +17,22 @@
 - [ ] **L70-13** 🟡🔍 **日付のシリアライズの形式がISO-8601（UTC）に**（Date Serialization）
   - OK: モデルの `toArray` / `toJson`（APIのレスポンス、Bladeで `@json` するデータ、キューに積むデータ、外部システムへの送信）の日付の形式が、**受け取る側の期待と一致している**
   - 7.x以降は `2019-12-02T20:01:00.283041Z`（UTC、マイクロ秒付き）。6.xまでは `2019-12-02 20:01:00`（アプリのタイムゾーン）
-  - 従来の形式を保つなら、モデル（共通の基底モデル）で `serializeDate` を上書きする
+  - 従来の形式を保つなら、モデル（共通の基底モデルかトレイト）で `serializeDate` を上書きする。6.xまでの実装は `$date->format($this->getDateFormat())` だったので、これに戻すのが最も忠実
 
     ```php
     protected function serializeDate(\DateTimeInterface $date)
     {
-        return $date->format('Y-m-d H:i:s');
+        return $date->format($this->getDateFormat());
     }
+    ```
+
+  - **`protected $dateFormat` を設定しても直らない**。13の `serializeDate` は `Carbon::instance($date)->toJSON()` を返すだけで、`$dateFormat` を見ない（`$dateFormat` はDBへの読み書きの形式）。逆に、全モデルに `$dateFormat` を追加すると、マイクロ秒付きのカラム（`datetime(6)`）などで**DBへの保存の形式が変わる**ので、追加した場合は既存の値の形式と合っているか確認する
+  - `$casts` で `'datetime:Y-m-d H:i'` のように形式を指定した属性は、その形式で出力される（`serializeDate` の影響を受けない）
+  - **モデルを通さない日付**（`response()->json(['at' => now()])` のように Carbon を直接JSONにする箇所）は、`serializeDate` では直らない。5.6のCarbon 1では `{"date": "...", "timezone_type": 3, "timezone": "Asia/Tokyo"}` という**オブジェクト**だったものが、Carbon 2以降はISO-8601の**文字列**になっている
+  - **確認の方法（AIの判断を待たずに自分で確かめられる）**: 旧版と新版の両方で、同じレコードを出力して比べる
+
+    ```bash
+    php artisan tinker --execute 'echo App\User::first()->toJson(), PHP_EOL, json_encode(["now" => now()]), PHP_EOL;'
     ```
 
   - `audit_grep.sh` は `serializeDate` がどこにもなければ警告を出す

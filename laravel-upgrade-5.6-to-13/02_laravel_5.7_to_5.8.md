@@ -16,7 +16,8 @@
   - OK: `Cache::lock('foo')->release()` のように**取得したのとは別のインスタンスで解放していない**（取得した `$lock` で `release()` する。別のプロセスで解放するなら `$lock->owner()` を渡して `Cache::restoreLock('foo', $owner)->release()`）
   - 別インスタンスでの `release()` は、エラーにならずに解放されないだけなので、ロックが期限まで残る
 - [ ] **L58-03** 🟡🔍 **パスワードの最小文字数のデフォルトが8文字に**（New Default Password Length）
-  - OK: パスワードの設定・リセットのバリデーションと画面の説明が、意図した文字数で一致している（`min:6` が残っていても、パスワードリセットの仕組み側では8文字が要求される場合がある）
+  - OK: パスワードの設定・リセットのバリデーションと画面の説明が、意図した文字数で一致している
+  - 6.0以降、パスワードリセットの仕組み（`PasswordBroker`）は文字数を検証しない（L60-16）。**アプリのバリデーションの `min:6` は、アプリの仕様としてそのままでよい**（8文字に上げるかは仕様の判断。上げる場合は既存のユーザーの次回の変更時から効く）
 - [ ] **L58-04** 🔴🔍 **Nexmo・Slackの通知チャンネルが別パッケージに**（Nexmo / Slack Notification Channels）
   - OK: Slackの通知を使うなら `laravel/slack-notification-channel` が入っている。Nexmoは `laravel/vonage-notification-channel` に移行済み（`toNexmo` → `toVonage`）
 - [ ] **L58-05** 🔴🔍 **コンテナの `tagged()` が配列ではなく `iterable` を返す**（Generators & Tagged Services）

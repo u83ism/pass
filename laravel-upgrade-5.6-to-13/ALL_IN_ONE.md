@@ -374,7 +374,8 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
   - OK: `Cache::lock('foo')->release()` のように**取得したのとは別のインスタンスで解放していない**（取得した `$lock` で `release()` する。別のプロセスで解放するなら `$lock->owner()` を渡して `Cache::restoreLock('foo', $owner)->release()`）
   - 別インスタンスでの `release()` は、エラーにならずに解放されないだけなので、ロックが期限まで残る
 - [ ] **L58-03** 🟡🔍 **パスワードの最小文字数のデフォルトが8文字に**（New Default Password Length）
-  - OK: パスワードの設定・リセットのバリデーションと画面の説明が、意図した文字数で一致している（`min:6` が残っていても、パスワードリセットの仕組み側では8文字が要求される場合がある）
+  - OK: パスワードの設定・リセットのバリデーションと画面の説明が、意図した文字数で一致している
+  - 6.0以降、パスワードリセットの仕組み（`PasswordBroker`）は文字数を検証しない（L60-16）。**アプリのバリデーションの `min:6` は、アプリの仕様としてそのままでよい**（8文字に上げるかは仕様の判断。上げる場合は既存のユーザーの次回の変更時から効く）
 - [ ] **L58-04** 🔴🔍 **Nexmo・Slackの通知チャンネルが別パッケージに**（Nexmo / Slack Notification Channels）
   - OK: Slackの通知を使うなら `laravel/slack-notification-channel` が入っている。Nexmoは `laravel/vonage-notification-channel` に移行済み（`toNexmo` → `toVonage`）
 - [ ] **L58-05** 🔴🔍 **コンテナの `tagged()` が配列ではなく `iterable` を返す**（Generators & Tagged Services）
@@ -513,13 +514,22 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
 - [ ] **L70-13** 🟡🔍 **日付のシリアライズの形式がISO-8601（UTC）に**（Date Serialization）
   - OK: モデルの `toArray` / `toJson`（APIのレスポンス、Bladeで `@json` するデータ、キューに積むデータ、外部システムへの送信）の日付の形式が、**受け取る側の期待と一致している**
   - 7.x以降は `2019-12-02T20:01:00.283041Z`（UTC、マイクロ秒付き）。6.xまでは `2019-12-02 20:01:00`（アプリのタイムゾーン）
-  - 従来の形式を保つなら、モデル（共通の基底モデル）で `serializeDate` を上書きする
+  - 従来の形式を保つなら、モデル（共通の基底モデルかトレイト）で `serializeDate` を上書きする。6.xまでの実装は `$date->format($this->getDateFormat())` だったので、これに戻すのが最も忠実
 
     ```php
     protected function serializeDate(\DateTimeInterface $date)
     {
-        return $date->format('Y-m-d H:i:s');
+        return $date->format($this->getDateFormat());
     }
+    ```
+
+  - **`protected $dateFormat` を設定しても直らない**。13の `serializeDate` は `Carbon::instance($date)->toJSON()` を返すだけで、`$dateFormat` を見ない（`$dateFormat` はDBへの読み書きの形式）。逆に、全モデルに `$dateFormat` を追加すると、マイクロ秒付きのカラム（`datetime(6)`）などで**DBへの保存の形式が変わる**ので、追加した場合は既存の値の形式と合っているか確認する
+  - `$casts` で `'datetime:Y-m-d H:i'` のように形式を指定した属性は、その形式で出力される（`serializeDate` の影響を受けない）
+  - **モデルを通さない日付**（`response()->json(['at' => now()])` のように Carbon を直接JSONにする箇所）は、`serializeDate` では直らない。5.6のCarbon 1では `{"date": "...", "timezone_type": 3, "timezone": "Asia/Tokyo"}` という**オブジェクト**だったものが、Carbon 2以降はISO-8601の**文字列**になっている
+  - **確認の方法（AIの判断を待たずに自分で確かめられる）**: 旧版と新版の両方で、同じレコードを出力して比べる
+
+    ```bash
+    php artisan tinker --execute 'echo App\User::first()->toJson(), PHP_EOL, json_encode(["now" => now()]), PHP_EOL;'
     ```
 
   - `audit_grep.sh` は `serializeDate` がどこにもなければ警告を出す
@@ -934,7 +944,7 @@ git diff <旧>..HEAD -U0 -- app bootstrap config routes resources database tests
 - [ ] **L130-11** 🟡🔍 **`Js::from`（`@js`）がUnicodeをエスケープしない**: 日本語が `\uXXXX` ではなくそのまま出力される。出力の比較をしているテストやスナップショット
 - [ ] **L130-12** 🟡🔍 **パスワードリセットのメールの件名**: `Reset Password Notification` → `Reset your password`。**日本語化のための翻訳ファイル（`lang/ja.json` など）のキーが旧い件名のままだと、件名が英語に戻る**
 - [ ] **L130-13** 🟡🔍 **ドメインを指定したルートが優先して照合される**: ドメインなしのルートと同じパスがある場合のマッチが意図どおり
-- [ ] **L130-08** 🟡🔍 **Managerの `extend` のクロージャの `$this` がマネージャーに**: サービスプロバイダの `$this` を使っていた場合は `use (...)` で渡す
+- [ ] **L130-08** 🟡🔍 **Managerの `extend` のクロージャの `$this` がマネージャーに**: `Auth::extend` `Cache::extend` `Session::extend` などで、サービスプロバイダの `$this` を使っていた場合は `use (...)` で渡す。**`Validator::extend` はManagerではないので対象外**
 - [ ] **L130-09** 🟡🔍 **`Str` のファクトリ（UUID・ULID・ランダム文字列）がテストの終了時にリセット**
 - [ ] **L130-20** 🟡 **`Container::call` がnull許容のクラスの引数のデフォルト値を尊重**（12.xのコンストラクタ注入と同じ挙動。L120-09）
 - [ ] **L130-21** ⚙️ **PHPUnit 12**: docblockのアノテーションは削除された。`@test` だけで `test` で始まらない名前のメソッドは、**エラーにならずに実行されなくなる**（`12_pitfalls_outside_official_guides.md`）
@@ -1074,6 +1084,7 @@ PHP公式の移行ノート（php-src の `UPGRADING`）の「Backward Incompati
   - OK: 使っていない、またはPECLから全サーバーに入れている。IMAP（メールの受信処理）は `webklex/php-imap` などのPHPだけで書かれたライブラリへの移行も選択肢
 - [ ] **P84-01** 🔴🔍 **暗黙のnull許容型が非推奨**: `function f(Foo $x = null)` → `function f(?Foo $x = null)`
   - **古いコードで大量に出る**。Rectorで一括で書き換えられる（`php -l` でも出る）
+  - **`mixed $x = null` は対象外**（`mixed` は元々 `null` を含む。`?mixed` と書くと逆に構文エラー）。型なしの `$x = null` も対象外
 - [ ] **P84-02** 🔴🔍 **`trigger_error()` の `E_USER_ERROR` が非推奨、`E_STRICT` 定数が非推奨**
 - [ ] **P84-03** 🔴🔍 **`fputcsv()` / `fgetcsv()` / `str_getcsv()` / `SplFileObject` のCSVのメソッドで `$escape` 引数の省略が非推奨**
   - OK: CSVの入出力で `$escape` を明示している
@@ -1096,6 +1107,7 @@ PHP公式の移行ノート（php-src の `UPGRADING`）の「Backward Incompati
 - [ ] **P85-01** 🔴🔍 **非正規のキャスト名 `(boolean)` `(integer)` `(double)` `(binary)` が非推奨**
 - [ ] **P85-02** 🔴🔍 **`curl_close()` `curl_share_close()` `finfo_close()` `imagedestroy()` `xml_parser_free()` が非推奨**（呼び出しを削除するだけ。PHP 8.0以降はオブジェクトなので、変数がスコープを抜ければ解放される。**長時間動くワーカーで、ハンドルをプロパティに持ち続けている場合**は `unset()` か `null` の代入にする）
 - [ ] **P85-03** 🔴🔍 **`$http_response_header` が非推奨**: `file_get_contents()` でHTTPを呼んだ後のレスポンスヘッダーは `http_get_last_response_headers()` で取る
+  - 非推奨の警告が出るのは、関数の中で**代入より前に読んだとき**だけ（PHP 8.5のコンパイラの実装。同じ関数の中で先に `$http_response_header = http_get_last_response_headers();` と代入していれば出ない）。紛らわしいので、変数名は `$headers` などに変えるのがおすすめ
 - [ ] **P85-04** 🔴🔍 **`PDO` クラスのドライバ固有の定数・メソッドが非推奨**: `PDO::MYSQL_ATTR_SSL_CA` → `Pdo\Mysql::ATTR_SSL_CA` など。**古い雛形の `config/database.php` の `options` に `PDO::MYSQL_ATTR_SSL_CA` がある**
 - [ ] **P85-05** 🔴🔍 **Reflectionの `setAccessible()` が非推奨**（効果がないので削除する）
 - [ ] **P85-06** 🟡🔍 **`__sleep()` / `__wakeup()` がソフト非推奨**（`__serialize()` / `__unserialize()` を使う）

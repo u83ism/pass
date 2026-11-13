@@ -192,6 +192,7 @@ chk  L70-11 "🔴" "モデルの booting/booted メソッドとの衝突" 'funct
 chk  L70-12 "🔴" "swift.mailer / swift.transport のバインディング" "swift\\.(mailer|transport)"
 chk  L70-13 "🟡" "日付のシリアライズ形式を決めている箇所（無ければ全モデルが ISO-8601/UTC で出力）" 'function[[:space:]]+serializeDate[[:space:]]*\(' app
 grep -rqE "function[[:space:]]+serializeDate" app 2>/dev/null || echo "  ⚠ serializeDate がどこにも定義されていません。モデルのJSON/配列の日付は 2019-12-02T20:01:00.000000Z 形式（UTC）で出力されます。意図どおりか確認してください（L70-13）"
+grep -rqE "function[[:space:]]+serializeDate" app 2>/dev/null || ! grep -rqE "\\\$dateFormat[[:space:]]*=" app 2>/dev/null || echo "  ⚠ \$dateFormat は設定されていますが serializeDate がありません。\$dateFormat はDBへの読み書きの形式で、JSON/配列の出力には効きません（L70-13）"
 
 # ---------------------------------------------------------------------------
 echo
@@ -285,7 +286,7 @@ chk  L130-04 "⚙️" "session の serialization（json に変えると全セッ
 chk  L130-05 "🔴" "upsert（uniqueBy が空だと例外）" '->upsert[[:space:]]*\('
 chk  L130-06 "🔴" "JobAttempted / QueueBusy イベントのプロパティ" 'exceptionOccurred|QueueBusy'
 chk  L130-07 "🟡" "ページネーションの旧ビュー名（pagination::default など）" 'pagination::(default|simple-default)'
-chk  L130-08 "🟡" "Manager の extend（クロージャの \$this がマネージャーになる）" '::extend[[:space:]]*\(' app
+chk  L130-08 "🟡" "Manager の extend（クロージャの \$this がマネージャーになる。Validator::extend は Manager ではないので対象外）" '(Auth|Cache|Session|Queue|Mail|Storage|Broadcast|Log|Hash|Notification|DB|Redis)::extend[[:space:]]*\(|app\([^)]*\)->extend[[:space:]]*\(' app
 chk  L130-09 "🟡" "Str のファクトリ（テストの終了時にリセットされる）" 'Str::(createUuidsUsing|createUlidsUsing|createRandomStringsUsing|freezeUuids|freezeUlids)' tests
 chk  L130-10 "🟡" "ポリモーフィックな多対多で独自ピボット（テーブル名が複数形に）" '->using[[:space:]]*\(' app
 chk  L130-11 "🟡" "Js::from / @js（Unicode をエスケープしない）" 'Js::from|@js[[:space:]]*\('
@@ -335,7 +336,7 @@ chk  P83-03 "🟡" "range()（引数の扱いが多数変更）" '(^|[^a-zA-Z_>:
 
 echo
 echo "## PHP 8.4"
-chk_ex P84-01 "🔴" "暗黙の null 許容型（Type \$x = null。?Type が必要。コメント・PHPDocの行は除外）" '(\(|,)[[:space:]]*[A-Za-z_\\][A-Za-z0-9_\\]*[[:space:]]+&?(\.\.\.)?\$[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*null[[:space:]]*[,)]' "$COMMENT_LINE"
+chk_ex P84-01 "🔴" "暗黙の null 許容型（Type \$x = null。?Type が必要。コメント・PHPDocの行は除外）" '(\(|,)[[:space:]]*[A-Za-z_\\][A-Za-z0-9_\\]*[[:space:]]+&?(\.\.\.)?\$[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*null[[:space:]]*[,)]' "$COMMENT_LINE|[^a-zA-Z_]mixed[[:space:]]+&?(\.\.\.)?[$][a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*null"
 chk  P84-02 "🔴" "trigger_error の E_USER_ERROR / E_STRICT" 'E_USER_ERROR|E_STRICT'
 chk  P84-03 "🔴" "CSV 関数（\$escape 引数を明示する必要）" '(fputcsv|fgetcsv|str_getcsv|setCsvControl)[[:space:]]*\('
 chk  P84-04 "🔴" "本体から外れた拡張（IMAP / OCI8 / PSpell）" '(^|[^a-zA-Z_])(imap_[a-z_]+|oci_[a-z_]+|pspell_[a-z_]+)[[:space:]]*\(|pdo_oci|oci:dbname'
@@ -346,7 +347,7 @@ echo
 echo "## PHP 8.5"
 chk  P85-01 "🔴" "非正規のキャスト名 (boolean)/(integer)/(double)/(binary)" '\((boolean|integer|double|binary)\)'
 chk  P85-02 "🔴" "curl_close / finfo_close / imagedestroy / xml_parser_free / curl_share_close（非推奨）" '(^|[^a-zA-Z_])(curl_close|curl_share_close|finfo_close|imagedestroy|xml_parser_free)[[:space:]]*\('
-chk  P85-03 "🔴" "\$http_response_header（http_get_last_response_headers() へ）" '\$http_response_header'
+chk_ex P85-03 "🔴" "\$http_response_header の読み取り（http_get_last_response_headers() へ。先に代入している関数は対象外なので、代入の行は除外）" '\$http_response_header' '\$http_response_header[[:space:]]*=[^=]'
 chk  P85-04 "🔴" "PDO クラスのドライバ固有定数（PDO::MYSQL_ATTR_* など。config/database.php に多い）" 'PDO::(MYSQL|PGSQL|SQLITE|DBLIB|FB|ODBC|OCI)_'
 chk  P85-05 "🔴" "Reflection の setAccessible（非推奨）" '->setAccessible[[:space:]]*\('
 chk  P85-06 "🟡" "__sleep / __wakeup（ソフト非推奨）" 'function[[:space:]]+__(sleep|wakeup)[[:space:]]*\('
